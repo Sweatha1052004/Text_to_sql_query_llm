@@ -1,65 +1,39 @@
 import sqlite3
-import pandas as pd
 
-# Connect to (or create) the SQLite database
-connection = sqlite3.connect("students.db")
+##Connect to sqlite3
+connection = sqlite3.connect("student.db")
 
-# Create a cursor object to execute SQL commands
+##create a Cursor object
+
 cursor = connection.cursor()
 
-# Define the SQL query to create the STUDENTS table (excluding Register_Number)
-table_info = """
-CREATE TABLE IF NOT EXISTS STUDENTS (
-    S_No INT,
-    Portal_ID VARCHAR(50),
-    Name VARCHAR(255),
-    Department VARCHAR(100),
-    C_Course VARCHAR(100),
-    L1_Score INT,
-    L2_Score INT,
-    L3_Score INT,
-    L4_Score INT,
-    L5_Score INT,
-    L6_Score INT,
-    L7_Score INT,
-    L8_Score INT,
-    DS INT,
-    PDS INT,
-    DBMS INT,
-    Java_Collections INT,
-    Weekly_Test_Total_Score INT,
-    Total_Score INT,
-    Total_Diff INT,
-    RANK INT
-);
+## create the table
+
+table_info="""
+CREATE table STUDENT(NAME VARCHAR(25),CLASS VARCHAR(25),
+MARKS INT)
 """
 
-# Execute the SQL query to create the table
 cursor.execute(table_info)
 
-# Path to the CSV file (replace with your actual file path)
-csv_file = r"C:\Users\Admin\Desktop\Txt_to_sql\Students Performance csv.csv"
+#Inserting records
 
-# Read the CSV file into a DataFrame
-data = pd.read_csv(csv_file)
+cursor.execute('''Insert Into STUDENT values('Hari','ML',95)''')
+cursor.execute('''Insert Into STUDENT values('Hemachandran','ML',98)''')
+cursor.execute('''Insert Into STUDENT values('Jagadeesh','ML',100)''')
+cursor.execute('''Insert Into STUDENT values('Geo','Data Science',95)''')
+cursor.execute('''Insert Into STUDENT values('Rajesh','ML',92)''')
+cursor.execute('''Insert Into STUDENT values('Irsath','Data Science',90)''')
+cursor.execute('''Insert Into STUDENT values('Arun','Data Science',75)''')
+cursor.execute('''Insert Into STUDENT values('Deva','CSE',65)''')
 
-# Drop the 'Register_Number' column from the DataFrame
-data = data.drop(columns=["Register_Number"])
+print("The inserted records are")
+data = cursor.execute('''Select * from STUDENT''')
+for row in data:
+    print(row)
 
-# Ensure DataFrame column names match the table schema
-data.columns = [
-    "S_No", "Portal_ID", "Name", "Department", "C_Course",
-    "L1_Score", "L2_Score", "L3_Score", "L4_Score", "L5_Score",
-    "L6_Score", "L7_Score", "L8_Score", "DS", "PDS",
-    "DBMS", "Java_Collections", "Weekly_Test_Total_Score",
-    "Total_Score", "Total_Diff", "RANK"
-]
 
-# Insert the data into the STUDENTS table
-data.to_sql("STUDENTS", connection, if_exists="append", index=False)
 
-# Commit the transaction and close the connection
+##commmit changes
 connection.commit()
-connection.close()
-
-print("Database 'students.db' created successfully, and data has been inserted.")
+connection.close
