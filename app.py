@@ -1,116 +1,97 @@
+from dotenv import load_dotenv
+import streamlit as st
 import os
 import sqlite3
-import streamlit as st
-from dotenv import load_dotenv
+import pandas as pd
 import google.generativeai as genai
 
 # Load environment variables
 load_dotenv()
 
-# Configure Gemini API
+# Configure API key for Gemini model
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
-# Define the prompt to instruct the Gemini model (ensure prompt is defined before being used)
-prompt = [
-    """
-    You are an expert at converting English questions into SQL queries. You are working with a database named `STUDENTS`, which has the following structure:
-
-    - `S_No` (integer): Serial number of the student.
-    - `Portal_ID` (string): Unique portal ID for each student.
-    - `Register_Number` (numeric): The register number of the student.
-    - `Name` (string): The name of the student.
-    - `Department` (string): The department the student belongs to.
-    - `C_Course` (string): The course the student is enrolled in.
-    - `L1_Score` to `L8_Score` (float): Scores for levels 1 to 8.
-    - `DS` (float): Data Structures score.
-    - `PDS` (float): Programming Data Structures score.
-    - `DBMS` (float): Database Management Systems score.
-    - `Java_Collections` (float): Java Collections score.
-    - `Weekly_Test_Total_Score` (float): Total score for weekly tests.
-    - `Total_score` (float): Overall total score.
-    - `Total_Diff` (float): Difference in total scores.
-    - `RANK` (integer): Rank of the student.
-
-    Your task is to:
-    1. Convert the user's natural language query into an optimized SQL command.
-    2. Ensure the query matches the database schema and structure exactly.
-    3. Execute the query on the database (if needed) and return the data in JSON format.
-    4. Provide the SQL query as well as the query result.
-
-    Examples:
-    1. User Query: "Show me the names and ranks of the top 10 students."
-       SQL Query: `SELECT Name, RANK FROM STUDENTS ORDER BY RANK ASC LIMIT 10;`
-    """
-]
-
-# Function to load the Google Gemini model and get SQL query as a response
+# Function to get response from Gemini model
 def get_gemini_response(question, prompt):
-    model = genai.GenerativeModel("gemini-pro")
+    model = genai.GenerativeModel('gemini-1.5-flash')
     response = model.generate_content([prompt[0], question])
-    generated_query = response.text.strip()
-    print(f"Generated SQL Query: {generated_query}")  # Debugging
-    return generated_query
+    return response.text
 
-# Streamlit app setup
-st.set_page_config(page_title="Gemini SQL Assistant", page_icon="🔎")
-st.header("Gemini SQL Assistant: Convert Questions to SQL Queries")
+# Function to read SQL query results from the database
+def read_sql_query(sql, db_path):
+    con = sqlite3.connect(db_path)
+    df = pd.read_sql_query(sql, con)
+    con.close()
+    return df
 
-# Apply custom styling
-st.markdown("""
-    <style>
-        .stTextInput>div>div>input {
-            border: 2px solid #4CAF50;
-            font-size: 18px;
-            padding: 12px;
-            border-radius: 8px;
-        }
-        .stButton>button {
-            background-color: #4CAF50;
-            color: white;
-            font-size: 16px;
-            padding: 10px 20px;
-            border-radius: 8px;
-            border: none;
-        }
-        .stButton>button:hover {
-            background-color: #45a049;
-        }
-        .stCode {
-            background-color: #f4f4f4;
-            padding: 16px;
-            border-radius: 8px;
-            border: 1px solid #ddd;
-            font-size: 16px;
-        }
-        .stText {
-            font-size: 18px;
-            color: #333;
-        }
-    </style>
-""", unsafe_allow_html=True)
+# Function to get database schema as a DataFrame
+def get_db_schema_df(db_path):
+    schema_data = []
+    con = sqlite3.connect(db_path)
+    cur = con.cursor()
+    # Get all table names
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
+    tables = [table[0] for table in cur.fetchall()]
+    # Get columns for each table
+    for table in tables:
+        cur.execute(f"PRAGMA table_info({table});")
+        columns = cur.fetchall()
+        for col in columns:
+            schema_data.append({"Table": table, "Column": col[1], "Data Type": col[2]})
+    con.close()
+    # Convert to DataFrame
+    return pd.DataFrame(schema_data)
 
-# User input for the natural language query
-question = st.text_input("Ask your question about the database:", key="input", placeholder="e.g., 'Show me the top 10 students'")
+# Streamlit app configuration
+st.set_page_config(page_title="I can Retrieve Any SQL query")
+st.title("Prompt To SQL Data")
+st.header("Convert your Prompts to get responses, NO need to learn DBMS 😎")
 
-# Button to trigger the query
-submit = st.button("Generate SQL Query")
+# User inputs: Database file and question
+db_file = st.file_uploader("Upload your database", type="db")
+question = st.text_input("Input your question:", key="input")
 
-# If the button is clicked
-if submit:
-    # Get SQL query from Gemini
-    response = get_gemini_response(question, prompt)
-    
-    # Validate the generated query
-    if response and response.strip():
-        st.subheader("Generated SQL Query")
-        st.code(response, language="sql")
-    else:
-        st.error("The model did not generate a valid SQL query. Please try again.")
+# Display the database schema in DataFrame format if the file is uploaded
+if db_file:
+    # Save the uploaded database file
+    db_path = "temp_student.db"
+    with open(db_path, "wb") as f:
+        f.write(db_file.getbuffer())
 
-# Explanation section
-st.markdown("""
-    <div class="stText">
-        The Gemini SQL Assistant helps you convert your natural language questions into SQL queries. 
-        Simply enter your question, and the tool will generate the SQL query that can be used to retrieve data from the database.
-    </div>
-""", unsafe_allow_html=True)
+    # Get and display database schema in DataFrame format
+    schema_df = get_db_schema_df(db_path)
+    st.subheader("Database Schema:")
+    st.dataframe(schema_df)
+
+    # Prompt for the Gemini model, dynamically updated with schema information
+    prompt = [
+        f"""
+        You are an expert in converting English questions to SQL queries!
+        Here is the database schema for reference:
+        {', '.join([f'Table {row["Table"]} with columns {", ".join(schema_df[schema_df["Table"] == row["Table"]]["Column"].unique())}' for _, row in schema_df.iterrows()])}
+
+        Use this schema information to accurately construct SQL queries based on the user question.
+        
+        Important:
+        1. Do NOT include backticks (```) or the keyword "sql" in the SQL command output.
+        2. Just return the plain SQL command without any markdown formatting.
+        
+        Example questions:
+        - How many records are in the employee table?
+        - Show all data for students in the 'Computer Science' course.
+        - What are the names of customers who made a purchase in the last month?
+        """
+    ]
+
+    # Process the question and show results when the submit button is clicked
+    if st.button("Ask the question"):
+        # Get SQL command from the Gemini model
+        sql_command = get_gemini_response(question, prompt)
+        
+        # Fetch and display query results in a DataFrame
+        response_df = read_sql_query(sql_command, db_path)
+        st.subheader("The Response is")
+        st.dataframe(response_df)
+        
+        # Clean up temporary database file
+        os.remove(db_path)
