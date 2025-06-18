@@ -1,97 +1,106 @@
+
 from dotenv import load_dotenv
+load_dotenv()
+
 import streamlit as st
 import os
 import sqlite3
-import pandas as pd
 import google.generativeai as genai
+import pandas as pd
 
-# Load environment variables
-load_dotenv()
+# configure our API key
+genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
 
-# Configure API key for Gemini model
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-
-# Function to get response from Gemini model
+# Function to load Gemini Model and provide SQL query as response
 def get_gemini_response(question, prompt):
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    response = model.generate_content([prompt[0], question])
-    return response.text
+    try:
+        model = genai.GenerativeModel('gemini-pro')
+        response = model.generate_content([prompt[0], question])
+        return response.text.strip()  # Ensure no extra whitespace
+    except Exception as e:
+        st.error(f"Error generating SQL query: {e}")
+        return None
 
-# Function to read SQL query results from the database
-def read_sql_query(sql, db_path):
-    con = sqlite3.connect(db_path)
-    df = pd.read_sql_query(sql, con)
-    con.close()
-    return df
+# Function to retrieve Query from SQL database
+def read_sql_query(sql, db):
+    try:
+        conn = sqlite3.connect(db)
+        cur = conn.cursor()
+        cur.execute(sql)
+        rows = cur.fetchall()
+        conn.close()
+        return rows
+    except Exception as e:
+        st.error(f"Error executing SQL query: {e}")
+        return []
 
-# Function to get database schema as a DataFrame
-def get_db_schema_df(db_path):
-    schema_data = []
-    con = sqlite3.connect(db_path)
-    cur = con.cursor()
-    # Get all table names
-    cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
-    tables = [table[0] for table in cur.fetchall()]
-    # Get columns for each table
-    for table in tables:
-        cur.execute(f"PRAGMA table_info({table});")
-        columns = cur.fetchall()
-        for col in columns:
-            schema_data.append({"Table": table, "Column": col[1], "Data Type": col[2]})
-    con.close()
-    # Convert to DataFrame
-    return pd.DataFrame(schema_data)
+# Function to save uploaded CSV file to SQLite database
+def csv_to_sqlite(csv_file, db_name):
+    try:
+        df = pd.read_csv(csv_file)
+        conn = sqlite3.connect(db_name)
+        df.to_sql('UPLOADED_DATA', conn, if_exists='replace', index=False)
+        conn.close()
+        return df.columns.tolist()
+    except Exception as e:
+        st.error(f"Error converting CSV to SQLite: {e}")
+        return []
 
-# Streamlit app configuration
-st.set_page_config(page_title="I can Retrieve Any SQL query")
-st.title("Prompt To SQL Data")
-st.header("Convert your Prompts to get responses, NO need to learn DBMS 😎")
+# Function to delete the SQLite database file
+def delete_database(db_name):
+    try:
+        if os.path.exists(db_name):
+            os.remove(db_name)
+    except Exception as e:
+        st.error(f"Error deleting database: {e}")
 
-# User inputs: Database file and question
-db_file = st.file_uploader("Upload your database", type="db")
+# Streamlit app
+st.set_page_config(page_title="Gemini Text to SQL LLM App")
+st.header("Gemini App to Retrieve SQL Data")
+
+# File uploader for CSV
+uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
+
+# Check if a CSV file is uploaded
+if uploaded_file is not None:
+    db_name = 'uploaded_data.db'
+    columns = csv_to_sqlite(uploaded_file, db_name)
+    table = 'UPLOADED_DATA'
+    st.success("CSV file successfully uploaded and converted to SQLite database.")
+else:
+    db_name = 'student.db'
+    table = 'STUDENT'
+    columns = ["NAME", "CLASS", "SECTION", "MARKS"]
+
+# Define the prompt dynamically based on the columns
+prompt = [
+    f"""
+        You are an expert in converting English questions to SQL query!
+        The SQL database is named {table} and has the following columns: {', '.join(columns)}.
+        For example:
+        - How many entries of records are present? -> SELECT COUNT(*) FROM {table};
+        - Tell me all the students studying in Data Science class? -> SELECT * FROM {table} WHERE CLASS='Data Science';
+        Please provide the SQL query without backticks or the word 'sql'.
+    """
+]
+
 question = st.text_input("Input your question:", key="input")
+submit = st.button("Retrieve")
 
-# Display the database schema in DataFrame format if the file is uploaded
-if db_file:
-    # Save the uploaded database file
-    db_path = "temp_student.db"
-    with open(db_path, "wb") as f:
-        f.write(db_file.getbuffer())
-
-    # Get and display database schema in DataFrame format
-    schema_df = get_db_schema_df(db_path)
-    st.subheader("Database Schema:")
-    st.dataframe(schema_df)
-
-    # Prompt for the Gemini model, dynamically updated with schema information
-    prompt = [
-        f"""
-        You are an expert in converting English questions to SQL queries!
-        Here is the database schema for reference:
-        {', '.join([f'Table {row["Table"]} with columns {", ".join(schema_df[schema_df["Table"] == row["Table"]]["Column"].unique())}' for _, row in schema_df.iterrows()])}
-
-        Use this schema information to accurately construct SQL queries based on the user question.
+if submit:
+    response = get_gemini_response(question, prompt)
+    if response:
+        st.subheader("The SQL Query Generated is:")
+        st.code(response, language='sql')
         
-        Important:
-        1. Do NOT include backticks (```) or the keyword "sql" in the SQL command output.
-        2. Just return the plain SQL command without any markdown formatting.
-        
-        Example questions:
-        - How many records are in the employee table?
-        - Show all data for students in the 'Computer Science' course.
-        - What are the names of customers who made a purchase in the last month?
-        """
-    ]
-
-    # Process the question and show results when the submit button is clicked
-    if st.button("Ask the question"):
-        # Get SQL command from the Gemini model
-        sql_command = get_gemini_response(question, prompt)
-        
-        # Fetch and display query results in a DataFrame
-        response_df = read_sql_query(sql_command, db_path)
-        st.subheader("The Response is")
-        st.dataframe(response_df)
-        
-        # Clean up temporary database file
-        os.remove(db_path)
+        data = read_sql_query(response, db_name)
+        if data:
+            st.subheader("The response is:")
+            for row in data:
+                st.write(row)
+        else:
+            st.write("No data found or an error occurred.")
+    
+    # Delete the uploaded database after the task is completed
+    if uploaded_file is not None:
+        delete_database(db_name)
